@@ -100,7 +100,7 @@ public:
     imu_orientation_edge_stddev = private_nh.param<double>("imu_orientation_edge_stddev", 0.1);
     imu_acceleration_edge_stddev = private_nh.param<double>("imu_acceleration_edge_stddev", 3.0);
 
-    points_topic = private_nh.param<std::string>("points_topic", "/velodyne_poits");
+    points_topic = private_nh.param<std::string>("points_topic", "/velodyne_points");
 
     // subscribers
     odom_sub.reset(new message_filters::Subscriber<nav_msgs::Odometry>(mt_nh, "/odom", 256));
@@ -423,7 +423,7 @@ private:
 
       if(enable_imu_acceleration) {
         Eigen::MatrixXd info = Eigen::MatrixXd::Identity(3, 3) / imu_acceleration_edge_stddev;
-        g2o::OptimizableGraph::Edge* edge = graph_slam->add_se3_prior_vec_edge(keyframe->node, Eigen::Vector3d::UnitZ(), *keyframe->acceleration, info);
+        g2o::OptimizableGraph::Edge* edge = graph_slam->add_se3_prior_vec_edge(keyframe->node, -Eigen::Vector3d::UnitZ(), *keyframe->acceleration, info);
         graph_slam->add_robust_kernel(edge, private_nh.param<std::string>("imu_acceleration_edge_robust_kernel", "NONE"), private_nh.param<double>("imu_acceleration_edge_robust_kernel_size", 1.0));
       }
       updated = true;
@@ -829,13 +829,18 @@ private:
       std::stringstream sst;
       sst << boost::format("%s/%06d") % directory % i;
 
-      keyframes[i]->dump(sst.str());
+      keyframes[i]->save(sst.str());
     }
 
     if(zero_utm) {
       std::ofstream zero_utm_ofs(directory + "/zero_utm");
       zero_utm_ofs << *zero_utm << std::endl;
     }
+
+    std::ofstream ofs(directory + "/special_nodes.csv");
+    ofs << "anchor_node " << (anchor_node == nullptr ? -1 : anchor_node->id()) << std::endl;
+    ofs << "anchor_edge " << (anchor_edge == nullptr ? -1 : anchor_edge->id()) << std::endl;
+    ofs << "floor_node " << (floor_plane_node == nullptr ? -1 : floor_plane_node->id()) << std::endl;
 
     res.success = true;
     return true;
