@@ -199,9 +199,17 @@ private:
       // fix the first node
       if(keyframes.empty() && new_keyframes.size() == 1) {
         if(private_nh.param<bool>("fix_first_node", false)) {
+          Eigen::MatrixXd inf = Eigen::MatrixXd::Identity(6, 6);
+          std::stringstream sst(private_nh.param<std::string>("fix_first_node_stddev", "1 1 1 1 1 1"));
+          for(int i = 0; i < 6; i++) {
+            double stddev = 1.0;
+            sst >> stddev;
+            inf(i, i) = 1.0 / stddev;
+          }
+
           anchor_node = graph_slam->add_se3_node(Eigen::Isometry3d::Identity());
           anchor_node->setFixed(true);
-          anchor_edge = graph_slam->add_se3_edge(anchor_node, keyframe->node, Eigen::Isometry3d::Identity(), Eigen::MatrixXd::Identity(6, 6));
+          anchor_edge = graph_slam->add_se3_edge(anchor_node, keyframe->node, Eigen::Isometry3d::Identity(), inf);
         }
       }
 
@@ -213,7 +221,7 @@ private:
       const auto& prev_keyframe = i == 0 ? keyframes.back() : keyframe_queue[i - 1];
 
       Eigen::Isometry3d relative_pose = keyframe->odom.inverse() * prev_keyframe->odom;
-      Eigen::MatrixXd information = inf_calclator->calc_information_matrix(prev_keyframe->cloud, keyframe->cloud, relative_pose);
+      Eigen::MatrixXd information = inf_calclator->calc_information_matrix(keyframe->cloud, prev_keyframe->cloud, relative_pose);
       auto edge = graph_slam->add_se3_edge(keyframe->node, prev_keyframe->node, relative_pose, information);
       graph_slam->add_robust_kernel(edge, private_nh.param<std::string>("odometry_edge_robust_kernel", "NONE"), private_nh.param<double>("odometry_edge_robust_kernel_size", 1.0));
     }
@@ -568,6 +576,13 @@ private:
     std::copy(new_keyframes.begin(), new_keyframes.end(), std::back_inserter(keyframes));
     new_keyframes.clear();
 
+    // move the first node anchor position to the current estimate of the first node pose
+    // so the first node moves freely while trying to stay around the origin
+    if(anchor_node && private_nh.param<bool>("fix_first_node_adaptive", true)) {
+      Eigen::Isometry3d anchor_target = static_cast<g2o::VertexSE3*>(anchor_edge->vertices()[1])->estimate();
+      anchor_node->setEstimate(anchor_target);
+    }
+
     // optimize the pose graph
     int num_iterations = private_nh.param<int>("g2o_solver_num_iterations", 1024);
     graph_slam->optimize(num_iterations);
@@ -607,7 +622,7 @@ private:
    */
   visualization_msgs::MarkerArray create_marker_array(const ros::Time& stamp) const {
     visualization_msgs::MarkerArray markers;
-    markers.markers.resize(5);
+    markers.markers.resize(4);
 
     // node markers
     visualization_msgs::Marker& traj_marker = markers.markers[0];
@@ -620,10 +635,10 @@ private:
     traj_marker.pose.orientation.w = 1.0;
     traj_marker.scale.x = traj_marker.scale.y = traj_marker.scale.z = 0.5;
 
-    visualization_msgs::Marker& imu_marker = markers.markers[4];
+    visualization_msgs::Marker& imu_marker = markers.markers[1];
     imu_marker.header = traj_marker.header;
     imu_marker.ns = "imu";
-    imu_marker.id = 4;
+    imu_marker.id = 1;
     imu_marker.type = visualization_msgs::Marker::SPHERE_LIST;
 
     imu_marker.pose.orientation.w = 1.0;
@@ -662,11 +677,11 @@ private:
     }
 
     // edge markers
-    visualization_msgs::Marker& edge_marker = markers.markers[1];
+    visualization_msgs::Marker& edge_marker = markers.markers[2];
     edge_marker.header.frame_id = "map";
     edge_marker.header.stamp = stamp;
     edge_marker.ns = "edges";
-    edge_marker.id = 1;
+    edge_marker.id = 2;
     edge_marker.type = visualization_msgs::Marker::LINE_LIST;
 
     edge_marker.pose.orientation.w = 1.0;
@@ -779,7 +794,7 @@ private:
     sphere_marker.header.frame_id = "map";
     sphere_marker.header.stamp = stamp;
     sphere_marker.ns = "loop_close_radius";
-    sphere_marker.id = 0;
+    sphere_marker.id = 3;
     sphere_marker.type = visualization_msgs::Marker::SPHERE;
 
     if(!keyframes.empty()) {
